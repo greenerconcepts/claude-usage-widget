@@ -17,7 +17,7 @@ A sleek, native macOS widget that shows your Claude plan usage at a glance — i
 Requirements: macOS 13+, Xcode Command Line Tools (`xcode-select --install`), and a Claude subscription.
 
 ```bash
-git clone https://github.com/maxmazur/claude-usage-widget.git
+git clone https://github.com/greenerconcepts/claude-usage-widget.git
 cd claude-usage-widget
 ./install.sh
 ```
@@ -37,7 +37,7 @@ Then click the ✳ sparkle in your menu bar → **Refresh Now**. When macOS asks
 
 Paste this into Claude Code:
 
-> Clone https://github.com/maxmazur/claude-usage-widget and set it up on my Mac. Follow the repo's SKILL.md.
+> Clone https://github.com/greenerconcepts/claude-usage-widget and set it up on my Mac. Follow the repo's SKILL.md.
 
 ## How it works
 
