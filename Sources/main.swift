@@ -756,6 +756,19 @@ final class UsagePanel: NSPanel {
     override var canBecomeKey: Bool { false }
 }
 
+/// Lets this never-activated app change the cursor while hovering its own
+/// window — macOS normally reserves cursor control for the active app. Uses
+/// the long-standing WindowServer flag via dlsym; silently no-ops if absent.
+func enableBackgroundCursor() {
+    typealias DefaultConnectionFn = @convention(c) () -> UInt32
+    typealias SetPropertyFn = @convention(c) (UInt32, UInt32, CFString, CFTypeRef) -> Int32
+    guard let conSym = dlsym(dlopen(nil, RTLD_LAZY), "_CGSDefaultConnection"),
+          let setSym = dlsym(dlopen(nil, RTLD_LAZY), "CGSSetConnectionProperty") else { return }
+    let connection = unsafeBitCast(conSym, to: DefaultConnectionFn.self)()
+    _ = unsafeBitCast(setSym, to: SetPropertyFn.self)(
+        connection, connection, "SetsCursorInBackground" as CFString, kCFBooleanTrue)
+}
+
 // MARK: - App
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -772,6 +785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastApiAt: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        enableBackgroundCursor()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "sparkle", accessibilityDescription: "Claude usage")
