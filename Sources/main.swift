@@ -459,60 +459,116 @@ final class GaugeRow {
     }
 }
 
-/// Invisible strip on the card's left/right edge that drags the panel wider or
-/// narrower. Borderless windows get no automatic resize handling from macOS,
-/// so the cursor and the drag are implemented here.
-final class WidthGrip: NSView {
-    enum Side { case left, right }
-    private let side: Side
-    var minWidth: CGFloat = 400
-    var maxWidth: CGFloat = 1200
+/// Full-window overlay that implements edge + corner resizing for the
+/// borderless panel (macOS provides none for frameless windows, and cursor
+/// rects are ignored for never-key windows — so both are done by hand here).
+final class ResizeOverlay: NSView {
+    weak var cardView: NSView?           // the visible card; zones hug its border
+    var minW: CGFloat = 400, maxW: CGFloat = 1200
+    var minH: CGFloat = 120, maxH: CGFloat = 400
     var onDone: (() -> Void)?
-    private var startX: CGFloat = 0
-    private var startFrame: NSRect = .zero
 
-    init(side: Side) {
-        self.side = side
-        super.init(frame: .zero)
+    private struct Zone { var dx: Int; var dy: Int } // -1/0/+1 per axis (AppKit coords: +y is up)
+    private var active: Zone?
+    private var start = NSPoint.zero
+    private var startFrame = NSRect.zero
+    private let tol: CGFloat = 10
+
+    /// Event position in global screen coords (event-based, so synthetic events work too).
+    private func globalPoint(_ event: NSEvent) -> NSPoint {
+        guard let w = window else { return .zero }
+        let p = event.locationInWindow
+        return NSPoint(x: w.frame.origin.x + p.x, y: w.frame.origin.y + p.y)
     }
-    required init?(coder: NSCoder) { fatalError() }
 
-    override var mouseDownCanMoveWindow: Bool { false } // don't hijack into a window move
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    private func zone(at p: NSPoint) -> Zone? {
+        guard let card = cardView?.frame else { return nil }
+        let inBandX = p.x >= card.minX - tol && p.x <= card.maxX + tol
+        let inBandY = p.y >= card.minY - tol && p.y <= card.maxY + tol
+        guard inBandX && inBandY else { return nil }
+        let dx = abs(p.x - card.minX) <= tol ? -1 : (abs(p.x - card.maxX) <= tol ? 1 : 0)
+        let dy = abs(p.y - card.minY) <= tol ? -1 : (abs(p.y - card.maxY) <= tol ? 1 : 0)
+        return (dx == 0 && dy == 0) ? nil : Zone(dx: dx, dy: dy)
+    }
+
+    /// Only claim clicks that land on an edge/corner band; the card's middle
+    /// stays free for isMovableByWindowBackground dragging.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let p = convert(point, from: superview)
+        return zone(at: p) != nil ? self : nil
+    }
+
+    private func diagonalCursor(nesw: Bool) -> NSCursor {
+        let sel = NSSelectorFromString(nesw ? "_windowResizeNorthEastSouthWestCursor"
+                                            : "_windowResizeNorthWestSouthEastCursor")
+        if let cls = NSCursor.self as AnyObject as? NSObjectProtocol, cls.responds(to: sel),
+           let c = cls.perform(sel)?.takeUnretainedValue() as? NSCursor {
+            return c
+        }
+        return .crosshair
+    }
+
+    private func cursor(for z: Zone) -> NSCursor {
+        if z.dx != 0 && z.dy != 0 { return diagonalCursor(nesw: z.dx == z.dy) }
+        return z.dx != 0 ? .resizeLeftRight : .resizeUpDown
+    }
 
     override func updateTrackingAreas() {
         trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds,
-                                       options: [.cursorUpdate, .activeAlways, .inVisibleRect],
+        addTrackingArea(NSTrackingArea(rect: .zero,
+                                       options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
                                        owner: self, userInfo: nil))
         super.updateTrackingAreas()
     }
 
-    override func cursorUpdate(with event: NSEvent) {
-        NSCursor.resizeLeftRight.set()
+    override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if let z = zone(at: p) { cursor(for: z).set() } else { NSCursor.arrow.set() }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if active == nil { NSCursor.arrow.set() }
     }
 
     override func mouseDown(with event: NSEvent) {
-        startX = NSEvent.mouseLocation.x
-        startFrame = window?.frame ?? .zero
+        let p = convert(event.locationInWindow, from: nil)
+        guard let z = zone(at: p), let w = window else { return }
+        active = z
+        start = globalPoint(event)
+        startFrame = w.frame
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let w = window else { return }
-        NSCursor.resizeLeftRight.set()
-        let dx = NSEvent.mouseLocation.x - startX
+        guard let z = active, let w = window else { return }
+        cursor(for: z).set()
+        let loc = globalPoint(event) // event position vs the window's live frame
+        let dx = loc.x - start.x
+        let dy = loc.y - start.y
         var f = startFrame
-        if side == .right {
-            f.size.width = min(max(startFrame.width + dx, minWidth), maxWidth)
-        } else {
-            let newW = min(max(startFrame.width - dx, minWidth), maxWidth)
-            f.origin.x = startFrame.maxX - newW
-            f.size.width = newW
+        if z.dx == 1 {
+            f.size.width = min(max(startFrame.width + dx, minW), maxW)
+        } else if z.dx == -1 {
+            let nw = min(max(startFrame.width - dx, minW), maxW)
+            f.origin.x = startFrame.maxX - nw
+            f.size.width = nw
+        }
+        if z.dy == 1 {
+            f.size.height = min(max(startFrame.height + dy, minH), maxH)
+        } else if z.dy == -1 {
+            let nh = min(max(startFrame.height - dy, minH), maxH)
+            f.origin.y = startFrame.maxY - nh
+            f.size.height = nh
         }
         w.setFrame(f, display: true)
     }
 
     override func mouseUp(with event: NSEvent) {
-        onDone?()
+        if active != nil {
+            active = nil
+            onDone?()
+        }
     }
 }
 
@@ -675,26 +731,26 @@ final class UsagePanel: NSPanel {
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: self, queue: .main, using: save)
         NotificationCenter.default.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: self, queue: .main, using: save)
 
-        // Drag either side edge of the card to stretch the widget.
-        for side in [WidthGrip.Side.left, .right] {
-            let grip = WidthGrip(side: side)
-            grip.minWidth = 380 + pad * 2
-            grip.maxWidth = 1200
-            grip.onDone = { [weak self] in
-                guard let self else { return }
-                UserDefaults.standard.set(NSStringFromRect(self.frame), forKey: "panelFrame3")
-            }
-            grip.translatesAutoresizingMaskIntoConstraints = false
-            root.addSubview(grip)
-            NSLayoutConstraint.activate([
-                grip.topAnchor.constraint(equalTo: holder.topAnchor),
-                grip.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
-                grip.widthAnchor.constraint(equalToConstant: 16),
-                side == .left
-                    ? grip.centerXAnchor.constraint(equalTo: holder.leadingAnchor)
-                    : grip.centerXAnchor.constraint(equalTo: holder.trailingAnchor),
-            ])
+        // Edge + corner resize handling (cursor feedback and dragging).
+        acceptsMouseMovedEvents = true
+        let overlay = ResizeOverlay()
+        overlay.cardView = holder
+        overlay.minW = 380 + pad * 2
+        overlay.maxW = 1200
+        overlay.minH = defaultSize.height
+        overlay.maxH = defaultSize.height + 220
+        overlay.onDone = { [weak self] in
+            guard let self else { return }
+            UserDefaults.standard.set(NSStringFromRect(self.frame), forKey: "panelFrame3")
         }
+        overlay.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(overlay, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            overlay.topAnchor.constraint(equalTo: root.topAnchor),
+            overlay.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            overlay.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            overlay.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+        ])
     }
 
     override var canBecomeKey: Bool { false }
@@ -741,6 +797,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let apiDue = self.lastApiAt.map { Date().timeIntervalSince($0) > 300 } ?? true
             self.scheduleRefresh(apiToo: apiDue)
         }
+
+        // Dev-only: replay a drag through the real event pipeline (hitTest →
+        // overlay handlers) so resize behavior is testable headlessly.
+        // Enable with: defaults write com.max.claudeusage enableTestHooks -bool true
+        if UserDefaults.standard.bool(forKey: "enableTestHooks") {
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name("com.max.claudeusage.testDrag"),
+                object: nil, queue: .main
+            ) { [weak self] note in
+                guard let self,
+                      let s = note.object as? String else { return }
+                let v = s.split(separator: ",").compactMap { Double($0) }
+                guard v.count == 4 else { return }
+                self.performTestDrag(from: NSPoint(x: v[0], y: v[1]),
+                                     to: NSPoint(x: v[2], y: v[3]))
+            }
+        }
+    }
+
+    /// Sends synthetic mouse events through the panel exactly as WindowServer
+    /// would: down at `from`, incremental drags, up at `to` (global AppKit coords).
+    private func performTestDrag(from: NSPoint, to: NSPoint) {
+        func send(_ type: NSEvent.EventType, _ global: NSPoint) {
+            let winPoint = NSPoint(x: global.x - panel.frame.origin.x,
+                                   y: global.y - panel.frame.origin.y)
+            if let e = NSEvent.mouseEvent(with: type, location: winPoint, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: panel.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 1) {
+                panel.sendEvent(e)
+            }
+        }
+        send(.leftMouseDown, from)
+        let steps = 8
+        for i in 1...steps {
+            let t = CGFloat(i) / CGFloat(steps)
+            send(.leftMouseDragged, NSPoint(x: from.x + (to.x - from.x) * t,
+                                            y: from.y + (to.y - from.y) * t))
+        }
+        send(.leftMouseUp, to)
+        NSLog("ClaudeUsage: testDrag done, frame now \(NSStringFromRect(panel.frame))")
     }
 
     private func scheduleRefresh(apiToo: Bool) {
