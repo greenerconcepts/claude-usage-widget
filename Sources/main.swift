@@ -459,6 +459,63 @@ final class GaugeRow {
     }
 }
 
+/// Invisible strip on the card's left/right edge that drags the panel wider or
+/// narrower. Borderless windows get no automatic resize handling from macOS,
+/// so the cursor and the drag are implemented here.
+final class WidthGrip: NSView {
+    enum Side { case left, right }
+    private let side: Side
+    var minWidth: CGFloat = 400
+    var maxWidth: CGFloat = 1200
+    var onDone: (() -> Void)?
+    private var startX: CGFloat = 0
+    private var startFrame: NSRect = .zero
+
+    init(side: Side) {
+        self.side = side
+        super.init(frame: .zero)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var mouseDownCanMoveWindow: Bool { false } // don't hijack into a window move
+
+    override func updateTrackingAreas() {
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds,
+                                       options: [.cursorUpdate, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
+        super.updateTrackingAreas()
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        startX = NSEvent.mouseLocation.x
+        startFrame = window?.frame ?? .zero
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let w = window else { return }
+        NSCursor.resizeLeftRight.set()
+        let dx = NSEvent.mouseLocation.x - startX
+        var f = startFrame
+        if side == .right {
+            f.size.width = min(max(startFrame.width + dx, minWidth), maxWidth)
+        } else {
+            let newW = min(max(startFrame.width - dx, minWidth), maxWidth)
+            f.origin.x = startFrame.maxX - newW
+            f.size.width = newW
+        }
+        w.setFrame(f, display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onDone?()
+    }
+}
+
 // MARK: - Floating panel (wide, low, dockable, stretchable)
 
 final class UsagePanel: NSPanel {
@@ -470,7 +527,7 @@ final class UsagePanel: NSPanel {
 
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: 480 + 44, height: 160),
-                   styleMask: [.borderless, .nonactivatingPanel, .resizable],
+                   styleMask: [.borderless, .nonactivatingPanel],
                    backing: .buffered, defer: false)
         isFloatingPanel = true
         level = .floating
@@ -617,6 +674,27 @@ final class UsagePanel: NSPanel {
         }
         NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: self, queue: .main, using: save)
         NotificationCenter.default.addObserver(forName: NSWindow.didEndLiveResizeNotification, object: self, queue: .main, using: save)
+
+        // Drag either side edge of the card to stretch the widget.
+        for side in [WidthGrip.Side.left, .right] {
+            let grip = WidthGrip(side: side)
+            grip.minWidth = 380 + pad * 2
+            grip.maxWidth = 1200
+            grip.onDone = { [weak self] in
+                guard let self else { return }
+                UserDefaults.standard.set(NSStringFromRect(self.frame), forKey: "panelFrame3")
+            }
+            grip.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(grip)
+            NSLayoutConstraint.activate([
+                grip.topAnchor.constraint(equalTo: holder.topAnchor),
+                grip.bottomAnchor.constraint(equalTo: holder.bottomAnchor),
+                grip.widthAnchor.constraint(equalToConstant: 16),
+                side == .left
+                    ? grip.centerXAnchor.constraint(equalTo: holder.leadingAnchor)
+                    : grip.centerXAnchor.constraint(equalTo: holder.trailingAnchor),
+            ])
+        }
     }
 
     override var canBecomeKey: Bool { false }
