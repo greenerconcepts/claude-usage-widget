@@ -493,11 +493,14 @@ final class ResizeOverlay: NSView {
         return (dx == 0 && dy == 0) ? nil : Zone(dx: dx, dy: dy)
     }
 
-    /// Only claim clicks that land on an edge/corner band; the card's middle
-    /// stays free for isMovableByWindowBackground dragging.
+    /// Claim the whole card: edge/corner bands resize, everywhere else moves
+    /// the window (explicitly — the implicit isMovableByWindowBackground path
+    /// is unreliable once an overlay sits above the content).
     override func hitTest(_ point: NSPoint) -> NSView? {
         let p = convert(point, from: superview)
-        return zone(at: p) != nil ? self : nil
+        if zone(at: p) != nil { return self }
+        if let card = cardView?.frame, card.insetBy(dx: -tol, dy: -tol).contains(p) { return self }
+        return nil
     }
 
     private func diagonalCursor(nesw: Bool) -> NSCursor {
@@ -533,11 +536,16 @@ final class ResizeOverlay: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard let w = window else { return }
         let p = convert(event.locationInWindow, from: nil)
-        guard let z = zone(at: p), let w = window else { return }
-        active = z
-        start = globalPoint(event)
-        startFrame = w.frame
+        if let z = zone(at: p) {
+            active = z
+            start = globalPoint(event)
+            startFrame = w.frame
+        } else {
+            active = nil
+            w.performDrag(with: event) // system window move: any spot, any screen
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
