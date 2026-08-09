@@ -60,6 +60,10 @@ The widget reads three sources, best available wins:
 ./uninstall.sh
 ```
 
+## Performance
+
+Measured on macOS 14: 0.0% CPU while idle, ~30 MB memory, no GPU use, no standing network connections. Event-driven (FSEvents) rather than polling; log files are read incrementally (new bytes only); the usage API is called at most once per 5 minutes (~1 KB per call). Zero Claude tokens consumed — the usage endpoint reports your limits, it doesn't count against them.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). This is an unofficial community tool, not affiliated with or endorsed by Anthropic.
