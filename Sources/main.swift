@@ -586,6 +586,7 @@ final class UsagePanel: NSPanel {
     let sessionRow = GaugeRow("Current session", color: Palette.session)
     let weekRow = GaugeRow("All models · week", color: Palette.week)
     let fableRow = GaugeRow("Fable · week", color: Palette.fable)
+    let liveStamp = NSTextField(labelWithString: " ") // heartbeat: "· live 6:24 AM"
 
     private let pad: CGFloat = 22 // room around the card for the drop shadow
 
@@ -668,7 +669,9 @@ final class UsagePanel: NSPanel {
         brandText.attributedStringValue = NSAttributedString(kerned)
         brandText.font = NSFont.systemFont(ofSize: 8.5, weight: .semibold)
         brandText.textColor = .tertiaryLabelColor
-        let brand = NSStackView(views: [icon, brandText])
+        liveStamp.font = NSFont.monospacedDigitSystemFont(ofSize: 8.5, weight: .regular)
+        liveStamp.textColor = .tertiaryLabelColor
+        let brand = NSStackView(views: [icon, brandText, liveStamp])
         brand.orientation = .horizontal
         brand.spacing = 4
 
@@ -909,6 +912,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.sessionRow.apply(state.session)
         panel.weekRow.apply(state.week)
         panel.fableRow.apply(state.fable, pending: "needs one-time sign-in")
+
+        // Heartbeat so an all-zero fresh week doesn't look like a dead widget.
+        let f = DateFormatter()
+        f.dateFormat = "h:mm a"
+        panel.liveStamp.stringValue = "· \(lastApi != nil ? "live" : "cached") \(f.string(from: Date()))"
 
         // Menu bar: three colored percentages — session · all models · fable.
         if let button = statusItem.button {
