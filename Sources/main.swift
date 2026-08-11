@@ -545,6 +545,8 @@ final class ResizeOverlay: NSView {
         } else {
             active = nil
             w.performDrag(with: event) // system window move: any spot, any screen
+            (w as? UsagePanel)?.snapToEdges()
+            onDone?()
         }
     }
 
@@ -575,6 +577,7 @@ final class ResizeOverlay: NSView {
     override func mouseUp(with event: NSEvent) {
         if active != nil {
             active = nil
+            (window as? UsagePanel)?.snapToEdges()
             onDone?()
         }
     }
@@ -732,7 +735,7 @@ final class UsagePanel: NSPanel {
             setContentSize(defaultSize)
             if let screen = NSScreen.main {
                 let v = screen.visibleFrame
-                setFrameOrigin(NSPoint(x: v.minX + 4, y: v.minY + 4))
+                setFrameOrigin(NSPoint(x: v.minX - pad, y: v.minY - pad)) // card flush with the corner
             }
         }
         let save: (Notification) -> Void = { [weak self] _ in
@@ -765,6 +768,21 @@ final class UsagePanel: NSPanel {
     }
 
     override var canBecomeKey: Bool { false }
+
+    /// After a move or resize, if the visible card lands near a screen edge,
+    /// slam it flush (the shadow margin clips off-screen, not the card).
+    func snapToEdges() {
+        guard let s = screen ?? NSScreen.main else { return }
+        let v = s.visibleFrame
+        var f = frame
+        let card = f.insetBy(dx: pad, dy: pad)
+        let tol: CGFloat = 30
+        if abs(card.minX - v.minX) <= tol { f.origin.x = v.minX - pad }
+        else if abs(card.maxX - v.maxX) <= tol { f.origin.x = v.maxX - card.width - pad }
+        if abs(card.minY - v.minY) <= tol { f.origin.y = v.minY - pad }
+        else if abs(card.maxY - v.maxY) <= tol { f.origin.y = v.maxY - card.height - pad }
+        if f != frame { setFrame(f, display: true, animate: true) }
+    }
 }
 
 /// Lets this never-activated app change the cursor while hovering its own
