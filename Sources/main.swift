@@ -20,7 +20,7 @@ struct UsageState {
 // Claude-family palette, one identity color per gauge.
 enum Palette {
     static let session = NSColor(calibratedRed: 0.85, green: 0.47, blue: 0.30, alpha: 1) // terracotta
-    static let week    = NSColor(calibratedRed: 0.74, green: 0.56, blue: 0.25, alpha: 1) // ochre
+    static let week    = NSColor(calibratedRed: 0.58, green: 0.49, blue: 0.36, alpha: 1) // camel — muted so alert-orange stands out
     static let fable   = NSColor(calibratedRed: 0.45, green: 0.58, blue: 0.53, alpha: 1) // sage
 
     static func tinted(_ base: NSColor, pct: Int?) -> NSColor {
