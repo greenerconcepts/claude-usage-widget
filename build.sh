@@ -29,5 +29,6 @@ swiftc -O Sources/main.swift \
     -o "$APP/Contents/MacOS/ClaudeUsage" \
     -framework AppKit -framework CoreServices -framework ServiceManagement
 
-codesign --force --sign - "$APP"
+SIGN_ID="$(security find-identity -p codesigning -v 2>/dev/null | grep -o '"[^"]*"' | head -1 | tr -d '"')"
+codesign --force --deep --sign "${SIGN_ID:--}" "$APP"
 echo "Built $APP"
