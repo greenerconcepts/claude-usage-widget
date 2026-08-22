@@ -250,8 +250,8 @@ final class UsageAPI {
     /// READ-ONLY: we never refresh or rewrite the token. Claude Code owns it and
     /// refreshes it itself; a second refresher would race it and log the user out.
     func fetch(completion: @escaping (ApiGauges?) -> Void) {
-        guard let creds = loadCreds() else { completion(nil); return }
-        if let exp = creds.expiresAt, exp.timeIntervalSinceNow < 0 { completion(nil); return }
+        guard let creds = loadCreds() else { NSLog("ClaudeUsage: no creds readable"); completion(nil); return }
+        if let exp = creds.expiresAt, exp.timeIntervalSinceNow < 0 { NSLog("ClaudeUsage: token expired, waiting for Claude Code"); completion(nil); return }
         request(token: creds.access, retryCreds: nil, completion: completion)
     }
 
@@ -268,9 +268,14 @@ final class UsageAPI {
             if status == 401 { completion(nil); return }   // Claude Code will refresh it; never us
             guard status == 200, let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                NSLog("ClaudeUsage: api status=%d", status)
                 completion(nil); return
             }
-            completion(UsageAPI.parse(obj))
+            let parsed = UsageAPI.parse(obj)
+            NSLog("ClaudeUsage: api ok session=%@ week=%@ model=%@",
+                  String(describing: parsed?.session?.pct), String(describing: parsed?.week?.pct),
+                  String(describing: parsed?.model?.pct))
+            completion(parsed)
         }.resume()
     }
 }
