@@ -170,7 +170,6 @@ final class UsageAPI {
     // MARK: keychain
 
     private func loadCreds() -> Creds? {
-        if tokenMissing { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: UsageAPI.service,
@@ -183,7 +182,6 @@ final class UsageAPI {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let oauth = obj["claudeAiOauth"] as? [String: Any],
               let token = oauth["accessToken"] as? String else {
-            tokenMissing = true
             return nil
         }
         var expires: Date?
@@ -192,53 +190,6 @@ final class UsageAPI {
                      refresh: oauth["refreshToken"] as? String,
                      expiresAt: expires,
                      fullItem: obj)
-    }
-
-    private func persist(access: String, refresh: String?, expiresIn: Double?, base: Creds) {
-        var full = base.fullItem
-        var oauth = (full["claudeAiOauth"] as? [String: Any]) ?? [:]
-        oauth["accessToken"] = access
-        if let r = refresh { oauth["refreshToken"] = r }
-        if let e = expiresIn { oauth["expiresAt"] = (Date().timeIntervalSince1970 + e) * 1000 }
-        full["claudeAiOauth"] = oauth
-        guard let data = try? JSONSerialization.data(withJSONObject: full) else { return }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: UsageAPI.service,
-        ]
-        SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-    }
-
-    // MARK: token refresh
-
-    private func refreshAccessToken(_ creds: Creds, completion: @escaping (String?) -> Void) {
-        guard let refresh = creds.refresh,
-              let url = URL(string: "https://console.anthropic.com/v1/oauth/token") else {
-            completion(nil); return
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.timeoutInterval = 15
-        req.httpBody = try? JSONSerialization.data(withJSONObject: [
-            "grant_type": "refresh_token",
-            "refresh_token": refresh,
-            "client_id": UsageAPI.clientID,
-        ])
-        URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
-            guard let http = resp as? HTTPURLResponse, http.statusCode == 200,
-                  let data = data,
-                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let access = obj["access_token"] as? String else {
-                completion(nil); return
-            }
-            // Keep the CLI's keychain entry in sync so both stay signed in.
-            self?.persist(access: access,
-                          refresh: obj["refresh_token"] as? String,
-                          expiresIn: obj["expires_in"] as? Double,
-                          base: creds)
-            completion(access)
-        }.resume()
     }
 
     // MARK: usage fetch
@@ -296,17 +247,12 @@ final class UsageAPI {
         return out.session != nil || out.week != nil || out.model != nil ? out : nil
     }
 
+    /// READ-ONLY: we never refresh or rewrite the token. Claude Code owns it and
+    /// refreshes it itself; a second refresher would race it and log the user out.
     func fetch(completion: @escaping (ApiGauges?) -> Void) {
         guard let creds = loadCreds() else { completion(nil); return }
-        let stale = creds.expiresAt.map { $0.timeIntervalSinceNow < 120 } ?? false
-        if stale {
-            refreshAccessToken(creds) { [weak self] token in
-                guard let token = token else { completion(nil); return }
-                self?.request(token: token, retryCreds: nil, completion: completion)
-            }
-        } else {
-            request(token: creds.access, retryCreds: creds, completion: completion)
-        }
+        if let exp = creds.expiresAt, exp.timeIntervalSinceNow < 0 { completion(nil); return }
+        request(token: creds.access, retryCreds: nil, completion: completion)
     }
 
     private func request(token: String, retryCreds: Creds?, completion: @escaping (ApiGauges?) -> Void) {
@@ -319,14 +265,7 @@ final class UsageAPI {
         req.timeoutInterval = 15
         URLSession.shared.dataTask(with: req) { [weak self] data, resp, _ in
             let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-            if status == 401, let creds = retryCreds {
-                // Token revoked/expired early — refresh once and retry.
-                self?.refreshAccessToken(creds) { fresh in
-                    guard let fresh = fresh else { completion(nil); return }
-                    self?.request(token: fresh, retryCreds: nil, completion: completion)
-                }
-                return
-            }
+            if status == 401 { completion(nil); return }   // Claude Code will refresh it; never us
             guard status == 200, let data = data,
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 completion(nil); return
@@ -927,7 +866,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.sessionRow.apply(state.session)
         panel.weekRow.apply(state.week)
-        panel.fableRow.apply(state.fable, pending: "needs one-time sign-in")
+        panel.fableRow.apply(state.fable, pending: "sign in to Claude Code")
 
         // Heartbeat so an all-zero fresh week doesn't look like a dead widget.
         let f = DateFormatter()
