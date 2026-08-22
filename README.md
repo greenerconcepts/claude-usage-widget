@@ -43,7 +43,7 @@ Paste this into Claude Code:
 
 The widget reads three sources, best available wins:
 
-1. **Anthropic's usage API** (`api.anthropic.com/api/oauth/usage`) — the exact percentages and reset timestamps the Claude app shows, including per-model weekly limits. Authenticated with your own Claude Code OAuth token from the macOS Keychain; the widget auto-refreshes the token and keeps the CLI's copy in sync.
+1. **Anthropic's usage API** (`api.anthropic.com/api/oauth/usage`) — the exact percentages and reset timestamps the Claude app shows, including per-model weekly limits. Authenticated with your own Claude Code OAuth token from the macOS Keychain — read-only; the widget never modifies your login.
 2. **The Claude desktop app's local usage cache** (`~/Library/Application Support/Claude/plan-usage-history.json`) — session + weekly percentages, no sign-in needed.
 3. **Claude Code's local session logs** (`~/.claude/projects/*.jsonl`) — used to estimate when your 5-hour session window resets.
 
